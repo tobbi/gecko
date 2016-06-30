@@ -111,6 +111,15 @@ private:
     PRStatus ReadFromSocket(PRFileDesc *fd);
     PRStatus WriteToSocket(PRFileDesc *fd);
 
+#ifdef XP_UNIX
+    bool IsHostDomainSocket()
+    {
+        nsAutoCString proxyHost;
+        mProxy->GetHost(proxyHost);
+        return proxyHost.First() == '/';
+    }
+#endif // XP_UNIX
+
 private:
     State     mState;
     uint8_t * mData;
@@ -420,30 +429,44 @@ nsSOCKSSocketInfo::ConnectToProxy(PRFileDesc *fd)
         mVersion = 5;
     }
 
+    nsAutoCString proxyHost;
+    mProxy->GetHost(proxyHost);
+
     int32_t proxyPort;
     mProxy->GetPort(&proxyPort);
 
     int32_t addresses = 0;
     do {
-        if (addresses++)
-            mDnsRec->ReportUnusable(proxyPort);
-        
-        rv = mDnsRec->GetNextAddr(proxyPort, &mInternalProxyAddr);
-        // No more addresses to try? If so, we'll need to bail
-        if (NS_FAILED(rv)) {
-            nsCString proxyHost;
-            mProxy->GetHost(proxyHost);
-            LOGERROR(("socks: unable to connect to SOCKS proxy, %s",
-                     proxyHost.get()));
-            return PR_FAILURE;
-        }
 
-        if (MOZ_LOG_TEST(gSOCKSLog, LogLevel::Debug)) {
-          char buf[kIPv6CStrBufSize];
-          NetAddrToString(&mInternalProxyAddr, buf, sizeof(buf));
-          LOGDEBUG(("socks: trying proxy server, %s:%hu",
-                   buf, ntohs(mInternalProxyAddr.inet.port)));
+#ifdef XP_UNIX
+        if (IsHostDomainSocket()) {
+            mInternalProxyAddr.raw.family = AF_UNIX;
+            memcpy(mInternalProxyAddr.local.path,
+                   proxyHost.get(),
+                   sizeof(mInternalProxyAddr.local.path));
+        } else {
+#endif // XP_UNIX
+            if (addresses++) {
+                mDnsRec->ReportUnusable(proxyPort);
+            }
+
+            rv = mDnsRec->GetNextAddr(proxyPort, &mInternalProxyAddr);
+            // No more addresses to try? If so, we'll need to bail
+            if (NS_FAILED(rv)) {
+                LOGERROR(("socks: unable to connect to SOCKS proxy, %s",
+                         proxyHost.get()));
+                return PR_FAILURE;
+            }
+
+            if (MOZ_LOG_TEST(gSOCKSLog, LogLevel::Debug)) {
+              char buf[kIPv6CStrBufSize];
+              NetAddrToString(&mInternalProxyAddr, buf, sizeof(buf));
+              LOGDEBUG(("socks: trying proxy server, %s:%hu",
+                       buf, ntohs(mInternalProxyAddr.inet.port)));
+            }
+#ifdef XP_UNIX
         }
+#endif // XP_UNIX
 
         NetAddr proxy = mInternalProxyAddr;
         FixupAddressFamily(fd, &proxy);
@@ -971,6 +994,14 @@ nsSOCKSSocketInfo::DoHandshake(PRFileDesc *fd, int16_t oflags)
 
     switch (mState) {
         case SOCKS_INITIAL:
+#ifdef XP_UNIX
+            if (IsHostDomainSocket()) {
+                mState = SOCKS_DNS_COMPLETE;
+                mLookupStatus = NS_OK;
+                return ConnectToProxy(fd);
+            }
+#endif // XP_UNIX
+
             return StartDNS(fd);
         case SOCKS_DNS_IN_PROGRESS:
             PR_SetError(PR_IN_PROGRESS_ERROR, 0);

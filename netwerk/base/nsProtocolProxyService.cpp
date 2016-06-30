@@ -394,6 +394,16 @@ proxy_GetBoolPref(nsIPrefBranch *aPrefBranch,
         aResult = temp;
 }
 
+static inline bool
+IsHostDomainSocket(const nsACString& aHost)
+{
+#ifdef XP_UNIX
+    return aHost.First() == '/';
+#else
+    return false;
+#endif // XP_UNIX
+}
+
 //----------------------------------------------------------------------------
 
 static const int32_t PROXYCONFIG_DIRECT4X = 3;
@@ -1867,7 +1877,8 @@ nsProtocolProxyService::Resolve_Internal(nsIChannel *channel,
     uint32_t proxyFlags = 0;
 
     if ((flags & RESOLVE_PREFER_SOCKS_PROXY) &&
-        !mSOCKSProxyHost.IsEmpty() && mSOCKSProxyPort > 0) {
+        !mSOCKSProxyHost.IsEmpty() &&
+        (IsHostDomainSocket(mSOCKSProxyHost) || mSOCKSProxyPort > 0)) {
       host = &mSOCKSProxyHost;
       if (mSOCKSProxyVersion == 4)
           type = kProxyType_SOCKS4;
@@ -1904,7 +1915,8 @@ nsProtocolProxyService::Resolve_Internal(nsIChannel *channel,
         type = kProxyType_HTTP;
         port = mFTPProxyPort;
     }
-    else if (!mSOCKSProxyHost.IsEmpty() && mSOCKSProxyPort > 0) {
+    else if (!mSOCKSProxyHost.IsEmpty() &&
+        (IsHostDomainSocket(mSOCKSProxyHost) || mSOCKSProxyPort > 0)) {
         host = &mSOCKSProxyHost;
         if (mSOCKSProxyVersion == 4)
             type = kProxyType_SOCKS4;
